@@ -1,0 +1,2 @@
+Provides an integration point for Apache Cassandra, phpcassa and Codeigniter.
+See the home controller for example usage.
