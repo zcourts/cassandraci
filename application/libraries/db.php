@@ -79,11 +79,23 @@ class Db {
      * instance of your CF each time.
      * @param array $cfl An array containing a list of CFs to initalise and
      * "cache" for queries later...
+     * @param $reinit defaults to false, if true then the given cf are re instanciated
+     * even if an instance already existed, if false then its not and the
+     * arg is ignored
      */
-    public function initCFs($cfl) {
+    public function initCFs($cfl, $reinit=false) {
         foreach ($cfl as $icf) {
-            //init the CFs to be accessible by name
-            $this->cfList[strtolower($icf)] = new ColumnFamily($this->conn, $icf);
+            $createCFInstance = false;
+            if (!isset($this->cfList[strtolower($icf)]) && !empty($this->cfList[strtolower($icf)])) {
+                $createCFInstance = true;
+            }
+            if ($reinit) {
+                $createCFInstance = true;
+            }
+            if ($createCFInstance) {
+                //init the CFs to be accessible by name
+                $this->cfList[strtolower($icf)] = new ColumnFamily($this->conn, $icf);
+            }
         }
     }
 
