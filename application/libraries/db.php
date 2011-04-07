@@ -1,0 +1,90 @@
+<?php
+
+require_once('phpcassa/connection.php');
+require_once('phpcassa/columnfamily.php');
+
+/**
+ * @author Courtney
+ */
+class Db {
+
+    private $CI;
+//    public $db;
+    private $conn;
+    /**
+     * @var ColumnFamily
+     */
+    private $cf, $cfObj;
+    private $cfList = array();
+
+    /**
+     * Init connection for the database using the settings in the cassandra.php
+     * config file...
+     */
+    public function __construct() {
+        $this->CI = & get_instance();
+        try {
+            $this->conn = new Connection($this->CI->config->item('keyspace'),
+                            $this->CI->config->item('cassandra_servers'));
+        } catch (Exception $e) {
+            show_error($e->getMessage());
+        }
+        $this->cf = $this->CI->config->item('default_cf');
+        $this->initCFs($this->CI->config->item('init_cf'));
+    }
+
+    /**
+     * Creates a new instance of the given CF which will be returned
+     * for interaction by <code>cf()</code>
+     * @param string $cf The column family to interact with
+     */
+    public function setCF($cf) {
+        $this->cfObj = new ColumnFamily($this->conn, $cf);
+    }
+
+    /**
+     * Returns the instance of the last column family created by
+     * calling <code>setCF()</code>... If setCF hasn't been called
+     * then the default_cf set in cassandra.php config file is returned,
+     * once setCF is called then the last one to be set is always returned.
+     * @return ColumnFamily
+     */
+    public function cf() {
+        return $this->cfObj;
+    }
+
+    /**
+     * Allows you to query any CF that was initalised either by setting a list of
+     * CF names in the cassandra.php config file or by calling initCFs(array)
+     * @param string $cfName The name of the column family to perform the query on
+     * this parameter is option. If it is not specified then the last cf used is
+     * returned, if its the first call then the default cf is returned
+     * - case insensitive
+     * @return ColumnFamily
+     */
+    public function query($cfName=NULL) {
+        if ($cfName === NULL) {
+            return $this->cfList[strtolower($this->cf)];
+        } else {
+            //set cf as the last cf so that subsequent queries don't need 
+            //to specify the cf name
+            $this->cf = $cfName;
+            return $this->cfList[strtolower($cfName)];
+        }
+    }
+
+    /**
+     * Initialises a set of column families which are stored in an associative
+     * array, keyed by the CF name to avoid using setCF which creates a new
+     * instance of your CF each time.
+     * @param array $cfl An array containing a list of CFs to initalise and
+     * "cache" for queries later...
+     */
+    public function initCFs($cfl) {
+        foreach ($cfl as $icf) {
+            //init the CFs to be accessible by name
+            $this->cfList[strtolower($icf)] = new ColumnFamily($this->conn, $icf);
+        }
+    }
+
+}
