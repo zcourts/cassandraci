@@ -8,13 +8,16 @@ require_once('phpcassa/columnfamily.php');
  */
 class Db {
 
-    private $CI;
-//    public $db;
+    private  $cf, $CI;
+    /**
+     *
+     * @var ConnectionPool
+     */
     private $conn;
     /**
      * @var ColumnFamily
      */
-    private $cf, $cfObj;
+    private $cfObj;
     private $cfList = array();
 
     /**
@@ -23,12 +26,7 @@ class Db {
      */
     public function __construct() {
         $this->CI = & get_instance();
-        try {
-            $this->conn = new Connection($this->CI->config->item('keyspace'),
-                            $this->CI->config->item('cassandra_servers'));
-        } catch (Exception $e) {
-            show_error($e->getMessage());
-        }
+        $this->creatPool($this->CI->config->item('keyspace'), $this->CI->config->item('cassandra_servers'));
         $this->cf = $this->CI->config->item('default_cf');
         $this->initCFs($this->CI->config->item('init_cf'));
     }
@@ -96,6 +94,47 @@ class Db {
                 //init the CFs to be accessible by name
                 $this->cfList[strtolower($icf)] = new ColumnFamily($this->conn, $icf);
             }
+        }
+    }
+
+    /**
+     * A straight rip of phpcassa's old Connection constructor. Connection class
+     * is now depreciated so it issues a warning when used, only thing it did
+     * was what's contained in this method, which is create an instance of the 
+     * ConnectionPool. Without having to modify anything else copying the
+     * contructor was the fastest/easiest way to do this...
+     * @param type $keyspace
+     * @param type $servers
+     * @param type $max_retries
+     * @param type $send_timeout
+     * @param type $recv_timeout
+     * @param type $recycle
+     * @param type $credentials
+     * @param type $framed_transport 
+     */
+    private function creatPool($keyspace, $servers=NULL) {
+        try {
+            if ($servers != NULL) {
+                $new_servers = array();
+                foreach ($servers as $server) {
+                    $new_servers[] = $server['host'] . ':' . (string) $server['port'];
+                }
+            } else {
+                $new_servers = NULL;
+            }
+
+            $this->conn = new ConnectionPool
+                            (
+                            $keyspace, $new_servers,
+                            $this->CI->config->item('max_retries'),
+                            $this->CI->config->item('send_timeout'),
+                            $this->CI->config->item('recv_timeout'),
+                            $this->CI->config->item('recycle'),
+                            $this->CI->config->item('credentials'),
+                            $this->CI->config->item('framed_transport')
+            );
+        } catch (Exception $e) {
+            show_error($e->getMessage());
         }
     }
 
