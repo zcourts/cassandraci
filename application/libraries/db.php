@@ -84,7 +84,7 @@ class Db {
     public function initCFs($cfl, $reinit=false) {
         foreach ($cfl as $icf) {
             $createCFInstance = false;
-            if (!isset($this->cfList[strtolower($icf)]) && empty($this->cfList[strtolower($icf)])) {
+            if (!isset($this->cfList[strtolower($icf)])) {
                 $createCFInstance = true;
             }
             if ($reinit) {
