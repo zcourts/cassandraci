@@ -4,7 +4,7 @@ require_once('phpcassa/connection.php');
 require_once('phpcassa/columnfamily.php');
 
 /**
- * @author Courtney
+ * @author Courtney Robinson <courtney@crlog.info>
  */
 class Db {
 
@@ -114,24 +114,15 @@ class Db {
      */
     private function creatPool($keyspace, $servers=NULL) {
         try {
-            if ($servers != NULL) {
-                $new_servers = array();
-                foreach ($servers as $server) {
-                    $new_servers[] = $server['host'] . ':' . (string) $server['port'];
-                }
-            } else {
-                $new_servers = NULL;
-            }
-
             $this->conn = new ConnectionPool
                             (
-                            $keyspace, $new_servers,
-                            $this->CI->config->item('max_retries'),
-                            $this->CI->config->item('send_timeout'),
-                            $this->CI->config->item('recv_timeout'),
-                            $this->CI->config->item('recycle'),
-                            $this->CI->config->item('credentials'),
-                            $this->CI->config->item('framed_transport')
+                            $keyspace, $servers//,
+//                            $this->CI->config->item('max_retries'),
+//                            $this->CI->config->item('send_timeout'),
+//                            $this->CI->config->item('recv_timeout'),
+//                            $this->CI->config->item('recycle'),
+//                            $this->CI->config->item('credentials'),
+//                            $this->CI->config->item('framed_transport')
             );
         } catch (Exception $e) {
             show_error($e->getMessage());

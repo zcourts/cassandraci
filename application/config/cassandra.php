@@ -1,13 +1,22 @@
 <?php
 
-$servers[0] = array('host' => '192.168.2.6', 'port' => 9160);
-$servers[1] = array('host' => '192.168.2.7', 'port' => 9160);
-$servers[3] = array('host' => '192.168.2.8', 'port' => 9160);
+/**
+ * @author Courtney Robinson <courtney@crlog.info>
+ * Using the command line i.e cassandra-cli create a test keyspace for e.g
+ * connect localhost/9160;
+ * create keyspace Keyspace1;
+ * use Keyspace1;
+ * create column family Standard1;
+ * 
+ */
+$servers[] = '127.0.0.1:9160';//If omitted, the port defaults to 9160.
+//$servers[] = '127.0.0.2:9160';
+//$servers[] = '127.0.0.3:9160';
 $config['cassandra_servers'] = $servers;
-$config['keyspace'] = "Keyspace1"; //keyspace name
-$config['default_cf'] = "Standard"; //default column family
+$config['keyspace'] = "Keyspace1";
+$config['default_cf'] = "Standard1";
 //set of column families your application uses and you want to have initialied and cached
-$config['init_cf'] = array("post", "users", "settings");
+$config['init_cf'] = array("Standard1"); //set of configs to initalize by default
 $config['max_retries'] = 5;
 $config['send_timeout'] = 5000;
 $config['recv_timeout'] = 5000;

@@ -67,10 +67,10 @@ class ConnectionWrapper {
             $transport = new TBufferedTransport($socket, 1024, 1024);
         }
 
-        $client = new CassandraClient(new TBinaryProtocolAccelerated($transport));
+        $this->client = new CassandraClient(new TBinaryProtocolAccelerated($transport));
         $transport->open();
 
-        $server_version = explode(".", $client->describe_version());
+        $server_version = explode(".", $this->client->describe_version());
         $server_version = $server_version[0];
         if ($server_version < self::LOWEST_COMPATIBLE_VERSION) {
             $ver = self::LOWEST_COMPATIBLE_VERSION;
@@ -79,21 +79,27 @@ class ConnectionWrapper {
                 "lowest compatible version: $ver)");
         }
 
-        $client->set_keyspace($keyspace);
+        $this->set_keyspace($keyspace);
 
         if ($credentials) {
             $request = new cassandra_AuthenticationRequest(array("credentials" => $credentials));
-            $client->login($request);
+            $this->client->login($request);
         }
 
         $this->keyspace = $keyspace;
-        $this->client = $client;
         $this->transport = $transport;
         $this->op_count = 0;
     }
 
     public function close() {
         $this->transport->close();
+    }
+
+    public function set_keyspace($keyspace) {
+        if ($keyspace !== NULL) {
+            $this->client->set_keyspace($keyspace);
+            $this->keyspace = $keyspace;
+        }
     }
 
 }
@@ -118,13 +124,25 @@ class ConnectionPool {
     public $keyspace;
     private $servers;
     private $pool_size;
-    private $timeout;
-    private $recycle;
-    private $max_retries;
+    private $send_timeout;
+    private $recv_timeout;
     private $credentials;
     private $framed_transport;
     private $queue;
     private $keyspace_description = NULL;
+
+    /**
+     * int $max_retries how many times an operation should be retried before
+     *     throwing a MaxRetriesException. Using 0 disables retries; using -1 causes
+     *     unlimited retries. The default is 5.
+     */
+    public $max_retries = self::DEFAULT_MAX_RETRIES;
+
+    /**
+     * int $recycle after this many operations, a connection will be automatically
+     *     closed and replaced. Defaults to 10,000.
+     */
+    public $recycle = self::DEFAULT_RECYCLE;
 
     /**
      * Constructs a ConnectionPool.
@@ -178,25 +196,16 @@ class ConnectionPool {
             $servers = self::$default_servers;
         $this->servers = $servers;
 
-        if (is_null($this->pool_size))
+        if (is_null($pool_size))
             $this->pool_size = max(count($this->servers) * 2, 5);
+        else
+            $this->pool_size = $pool_size;
 
         $this->queue = array();
 
         // Randomly permute the server list
-        $n = count($servers);
-        if ($n > 1) {
-            foreach (range(0, $n - 1) as $i) {
-                $j = rand($i, $n - 1);
-                $temp = $servers[$j];
-                $servers[$j] = $servers[$i];
-                $servers[$i] = $temp;
-            }
-        }
+        shuffle($this->servers);
         $this->list_position = 0;
-
-        foreach(range(0, $this->pool_size - 1) as $i)
-            $this->make_conn();
     }
 
     private function make_conn() {
@@ -215,7 +224,7 @@ class ConnectionPool {
             } catch (TException $e) {
                 $h = $this->servers[$this->list_position];
                 $err = (string)$e;
-                error_log("Error connecting to $h: $err", 0);
+                $this->error_log("Error connecting to $h: $err", 0);
                 $this->stats['failed'] += 1;
             }
         }
@@ -224,10 +233,32 @@ class ConnectionPool {
     }
 
     /**
+     * Adds connections to the pool until $pool_size connections
+     * are in the pool.
+     */
+    public function fill() {
+        while (count($this->queue) < $this->pool_size)
+            $this->make_conn();
+    }
+
+    /**
      * Retrieves a connection from the pool.
+     *
+     * If the pool has fewer than $pool_size connections in
+     * it, a new connection will be created.
+     *
      * @return ConnectionWrapper a connection
      */
     public function get() {
+        $num_conns = count($this->queue);
+        if ($num_conns < $this->pool_size) {
+            try {
+                $this->make_conn();
+            } catch (NoServerAvailable $e) {
+                if ($num_conns == 0)
+                    throw $e;
+            }
+        }
         return array_shift($this->queue);
     }
 
@@ -286,6 +317,21 @@ class ConnectionPool {
      * Performs a Thrift operation using a connection from the pool.
      * The first argument should be the name of the function. The following
      * arguments should be the arguments for that Thrift function.
+     *
+     * If the connect fails with any exception other than a NotFoundException,
+     * the connection will be closed and replaced in the pool. If the
+     * Exception is suitable for retrying the operation (TimedOutException,
+     * UnavailableException, TTransportException), the operation will be
+     * retried with a new connection after an exponentially increasing
+     * backoff is performed.
+     *
+     * To avoid automatic retries, create a ConnectionPool with the
+     * $max_retries argument set to 0.
+     *
+     * In general, this method should *not* be used by users of the
+     * library. It is primarily intended for internal use, but is left
+     * exposed as an open workaround if needed.
+     *
      * @return mixed
      */
     public function call() {
@@ -308,6 +354,9 @@ class ConnectionPool {
                 $resp = call_user_func_array(array($conn->client, $f), $args);
                 $this->return_connection($conn);
                 return $resp;
+            } catch (cassandra_NotFoundException $nfe) {
+                $this->return_connection($conn);
+                throw $nfe;
             } catch (cassandra_TimedOutException $toe) {
                 $last_err = $toe;
                 $this->handle_conn_failure($conn, $f, $toe, $retry_count);
@@ -317,6 +366,9 @@ class ConnectionPool {
             } catch (TTransportException $tte) {
                 $last_err = $tte;
                 $this->handle_conn_failure($conn, $f, $tte, $retry_count);
+            } catch (Exception $e) {
+                $this->handle_conn_failure($conn, $f, $e, $retry_count);
+                throw $e;
             }
         }
         throw new MaxRetriesException("An attempt to execute $f failed $tries times.".
@@ -325,11 +377,22 @@ class ConnectionPool {
 
     private function handle_conn_failure($conn, $f, $exc, $retry_count) {
         $err = (string)$exc;
-        error_log("Error performing $f on $conn->server: $err", 0);
+        $this->error_log("Error performing $f on $conn->server: $err", 0);
         $conn->close();
         $this->stats['failed'] += 1;
         usleep(self::BASE_BACKOFF * pow(2, $retry_count) * self::MICROS);
         $this->make_conn();
+    }
+
+    /**
+     *
+     * Extracing error log function call so that writing to the error log
+     * can be  over written.
+     * @param string $errorMsg
+     * @param int $messageType
+     */
+    protected function error_log($errorMsg, $messageType=0) {
+        error_log($errorMsg, $messageType);
     }
 
 }
